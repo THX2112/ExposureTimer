@@ -1,39 +1,39 @@
 //
 //  Exposure Unit Timer
 //
+
 #include "Timer.h"
-#include <Button.h>
 #include <EEPROM.h>
-
 Timer t;
-Button button = Button(3,BUTTON_PULLUP);
-
-//int button = 3;
+int button = 2;
 int led = 0;
-int toggle = 2;
+int toggle = 3;
 int vSwitch = 1;
 unsigned long duration = 1000; // Length of time for exposure. Will get true value from EEPROM.
 int address = 0;
-unsigned long startTime=0;
-unsigned long now=0;
-unsigned long endTime=0;
+unsigned long startTime = 0;
+unsigned long now = 0;
+unsigned long endTime = 0;
 boolean buttonState = LOW; //  LOW is PUSHED
 boolean toggleState = LOW;
 boolean running = false;
+boolean lastButtonState;
+boolean justPressed;
+boolean timing;
 
 // the setup routine runs once when you press reset:
 void setup() {
   // initialize the digital pin as an output.
   pinMode(0, OUTPUT); //  LED
   pinMode(1, OUTPUT); //  12V Switch
-  pinMode(2, INPUT); // Toggle
-  pinMode(3, INPUT); //  Button
+  pinMode(2, INPUT); // Button
+  pinMode(3, INPUT); //  Toggle
   pinMode(4, OUTPUT); //  Unused
   pinMode(5, INPUT); // was Button
 
-  //buttonState = digitalRead(button);
-  if (button.isPressed()) {
-    t.oscillate(led, 100, HIGH);
+  buttonState = digitalRead(button);
+  if (buttonState == LOW) {
+
     setDuration(); // if button is held down on bootup, calibrate timer.
   }
   EEPROM.get(address, duration);
@@ -42,28 +42,27 @@ void setup() {
 
 // the loop routine runs over and over again forever:
 void loop() {
-//t.stop();
-digitalWrite(led, HIGH);
-delay(50);
-digitalWrite(led, LOW);
-delay(50);
-digitalWrite(led, HIGH);
-delay(50);
-digitalWrite(led, LOW);
-  //t.update();
+  digitalWrite(led, HIGH);    //  Flash LEDs to show we're alive.
+  delay(50);
+  digitalWrite(led, LOW);
+  delay(50);
+  digitalWrite(led, HIGH);
+  delay(50);
+  digitalWrite(led, LOW);
+  buttonState = digitalRead(button);
+  while (buttonState == LOW) {    //  Wait for button to be released if now pressed.
+    buttonState = digitalRead(button);
+  }
+  lastButtonState = HIGH;
   toggleState = digitalRead(toggle);
-
   if (toggleState == HIGH) {
-    running=false;
-    //t.stop(led);
-    //t.oscillate(led, 500, HIGH);
+    delay(100);
+    running = false;
     timed();
   }
 
   if (toggleState == LOW) {
-    running=false;
-    //t.stop(led);
-    //t.oscillate(led, 1000, HIGH);
+    running = false;
     manual();
   }
 }
@@ -72,67 +71,104 @@ digitalWrite(led, LOW);
 void timed() {
   while (toggleState == HIGH) {
     toggleState = digitalRead(toggle);
-    t.update();
-    now=millis();
-    if (button.uniquePress() && running==false) {  //Turn it 
-      startTime=millis();
-      endTime=startTime+duration;
-      running=true;
-      t.stop(led);
+    buttonState = digitalRead(button);
+    if (buttonState == LOW && lastButtonState == HIGH) {
+      lastButtonState = LOW;
+      startTime = millis();
+      endTime = startTime + duration;
+      running = true;
       digitalWrite(led, HIGH);
-      digitalWrite(vSwitch,HIGH); // turn on 12V      
+      digitalWrite(vSwitch, HIGH); // turn on 12V
+      delay(200);
     }
-    if (running==true && now>endTime){
-      running=false;
+    now = millis();
+    if (running == true && now > endTime) {
       digitalWrite(led, LOW);
-      digitalWrite(vSwitch,LOW); // turn off 12V
+      digitalWrite(vSwitch, LOW); // turn off 12V
+      running = false;
     }
-
-    
+    if (buttonState == HIGH && lastButtonState == LOW) {
+      lastButtonState = HIGH;
+      delay(200);
+    }
   }
-
+  //Make sure everything is turned off if toggle is flipped during burn
+  digitalWrite(led, LOW);
+  digitalWrite(vSwitch, LOW); // turn off 12V
 }
 
 //
 void manual() {
-
+  running = false;
+  justPressed = false;
   while (toggleState == LOW) {
     toggleState = digitalRead(toggle);
-    t.update();
-    if (button.uniquePress() && running==false) {  //Turn it ON
-      running=true;
-      t.stop(led);
-      digitalWrite(led, HIGH);
-      digitalWrite(vSwitch,HIGH); // turn on 12V
+    buttonState = digitalRead(button);
+    if (buttonState == LOW && lastButtonState == HIGH) {
+      justPressed = true;
+      if (running == true && justPressed == true) { //Turn it OFF
+        running = false;
+        digitalWrite(led, LOW);
+        digitalWrite(vSwitch, LOW); // turn off 12V
+        justPressed = false;
+      }
+      if (running == false && justPressed == true) { //Turn it ON
+        running = true;
+        digitalWrite(led, HIGH);
+        digitalWrite(vSwitch, HIGH); // turn on 12V
+        justPressed = false;
+      }
+      lastButtonState = LOW;
+      delay(200);
     }
-    if (button.uniquePress() && running==true) {  //Turn it OFF
-      running=false;
-      digitalWrite(led, LOW);
-      digitalWrite(vSwitch,LOW); // turn off 12V
+    if (buttonState == HIGH && lastButtonState == LOW) {
+      lastButtonState = HIGH;
+      delay(200);
     }
-
   }
 }
 //
 void setDuration() {
-  running=true;
-  while (running) {
+  t.oscillate(led, 100, HIGH);
+  while (buttonState == LOW) {  //  Wait for button to be released.
     t.update();
-    if (button.uniquePress()) {
+    buttonState = digitalRead(button);
+    if (buttonState == HIGH) {
+      lastButtonState = HIGH;
+      running = true;
+      delay(100);
+    }
+  }
+  while (running) {
+    buttonState = digitalRead(button);
+    t.update();
+    if (buttonState == LOW && lastButtonState == HIGH) {    //  If timer started
+      lastButtonState = LOW;
       t.stop(led);
       digitalWrite(led, HIGH);
-      bool timing = true;
+      timing = true;
       startTime = millis();
+      delay(200);
       while (timing) {
-        if (button.uniquePress()) {
+        buttonState = digitalRead(button);
+        if (buttonState == LOW && lastButtonState == HIGH) {  //  If timer is stopped
+          lastButtonState = LOW;
           duration = millis() - startTime;
           digitalWrite(led, LOW);
+          EEPROM.put(address, duration); //  Burn EEPROM with new duration value;
           timing = false;
+          running = false;
+          delay(200);
+        }
+        if (buttonState == HIGH && lastButtonState == LOW) {
+          lastButtonState = HIGH;
+          delay(200);
         }
       }
-      EEPROM.put(address, duration); //  Burn EEPROM with new duration value;
-      running=false;
+    }
+    if (buttonState == HIGH && lastButtonState == LOW) {
+      lastButtonState = HIGH;
+      delay(200);
     }
   }
 }
-
